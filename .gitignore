@@ -1,0 +1,38 @@
+# MacOS-generated files 
+.DS_Store
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# vscode
+.vscode
+
+# ruff
+.ruff_cache
+
+# notebook
+notebook
+
+# data
+data/*
+
+# temporararily ignored files
+pyproject.toml
+uv.lock
+
+# model outputs
+outputs/*
+
+# logs
+logs/*
+
+# notebook
+*.ipynb
