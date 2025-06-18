@@ -29,7 +29,7 @@ class Config:
     split_ratio: float = 0.2
     random_seed: int = 42
     num_workers: int = os.cpu_count()
-    pin_memory: bool = True
+    pin_memory: bool = True if torch.cuda.is_available() else False
 
     # Model
     model_name: str = ""
@@ -39,7 +39,8 @@ class Config:
     learning_rate: float = 1e-3
     weight_decay: float = 1e-3
     min_lr: float = 1e-6
+    gradient_accumulation_steps: int = 2
     label_smoothing: float = 0.1
     early_stopping_patience: int = 5
-    do_log: bool = False
+    report_to: str | None = "wandb"
     logging_steps: int = 100

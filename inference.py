@@ -1,23 +1,21 @@
-import pandas as pd
+from accelerate import Accelerator
+from accelerate.utils import TorchDynamoPlugin
 import torch
-from src.models.base import BaseModel
-import torch.nn as nn
-from torch.amp import autocast
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
+from src.models.base import BaseModel
 from src.configs.base_config import Config
 from src.utils import set_seed
-
 
 def prepare_testloader(config: Config) -> DataLoader:
     """
     Prepare the test dataloader for inference.
     """
-    # --- Dataset and DataLoader ---
     print("Setting up dataset and dataloader...")
-    test_dataset: Dataset
+    # --- Dataset and DataLoader ---
+    # This is a placeholder; replace with your actual dataset class and arguments.
+    test_dataset = YourActualDatasetClass(data_path=config.test_path, ...)
 
     test_loader = DataLoader(
         test_dataset,
@@ -37,42 +35,65 @@ def inference(config):
     # --- Seed Setting ---
     set_seed(config)
 
+    # --- Accelerator ---
+    # Initialize accelerator with performance optimizations
+    torch_dynamo_plugin = TorchDynamoPlugin(
+            backend="inductor",
+            mode="max-autotune",
+            use_regional_compilation=True,
+    ) if hasattr(torch, "compile") else None
+
+
+    accelerator = Accelerator(
+        mixed_precision="fp16",  # Use "bf16" on A100/H100, "fp16" on others
+        dynamo_plugin=torch_dynamo_plugin,
+    )
+
     print("Starting inference...")
-    print(f"Using device: {config.device}")
+    # Let accelerate handle the device printing
+    accelerator.print(f"Using device: {accelerator.device}")
 
     test_loader = prepare_testloader(config)
 
     # --- Model Loading ---
-    model_save_path = config.output_dir / "best_model.pth"
-    print(f"Loading model from {model_save_path}...")
+    # BEST PRACTICE: Load state_dict before preparing the model
+    best_model_path = config.output_dir / "best_model_state"
+    accelerator.print(f"Loading model from {best_model_path}...")
     config.pretrained = False
     model = BaseModel(config)
-    model.load_state_dict(torch.load(model_save_path, map_location=config.device))
-    is_distributed = torch.cuda.device_count() > 1 and "cuda" in str(config.device)
-    if is_distributed:
-        print(f"Using {torch.cuda.device_count()} GPUs for training.")
-        model = nn.DataParallel(model)
-    use_amp = "cuda" in str(config.device)
+    
+    # --- Prepare for acceleration ---
+    # This will move the model to the correct device and compile it with TorchDynamo
+    model, test_loader = accelerator.prepare(model, test_loader)
+    accelerator.load_state(best_model_path)
 
-    model.to(config.device)
     model.eval()
+    all_predictions = []
 
     # --- Inference Loop ---
     with torch.no_grad():
-        progress_bar = tqdm(test_loader, desc="Inference", leave=False)
+        progress_bar = tqdm(test_loader, desc="Inference", disable=not accelerator.is_main_process)
         for inputs in progress_bar:
-            inputs = inputs.to(config.device, non_blocking=True)
+            # NO NEED for inputs.to(device). `accelerate` handles it.
+            outputs = model(inputs)
 
-            # Use mixed precision for faster inference on compatible GPUs
-            with autocast(str(config.device), enabled=use_amp):
-                outputs = model(inputs)
+            # Gather predictions from all processes
+            gathered_predictions = accelerator.gather(outputs)
+            all_predictions.append(gathered_predictions.cpu())
 
     # --- Process and Save Results ---
-    print("Processing and saving results...")
+    # This block will only run on the main process to avoid duplicate work
+    if accelerator.is_main_process:
+        print("Processing and saving results...")
+        # Concatenate all batches of predictions
+        final_predictions = torch.cat(all_predictions)
 
-    pass
+        # Now you can process `final_predictions` and save to a CSV
+        # e.g., create_submission_file(final_predictions, config.submission_path)
+        pass
 
-    print(f"Inference completed.")
+    accelerator.wait_for_everyone()
+    print("Inference completed.")
 
 
 if __name__ == "__main__":
